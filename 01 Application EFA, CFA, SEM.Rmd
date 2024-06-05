@@ -78,7 +78,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 library(foreign)
-data <- read.spss("../Data/HBAT.sav", to.data.frame=TRUE)
+data <- read.spss("Data/HBAT.sav", to.data.frame=TRUE)
 ```
 
 ```{r}
