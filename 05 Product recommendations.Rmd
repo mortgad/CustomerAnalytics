@@ -14,9 +14,9 @@ library(arulesViz)
 
 When looking at sales data, we are able to determine whether products are bougt more often together, than their posterior probability indicates.
 
-When making product recommendations we are in essense looking at the condtitional probability of buy e.g milk given that you have bought meat.
+When making product recommendations we are in essense looking at the conditional probability of buy e.g milk given that you have bought meat.
 
-If this conditional propability is suffiently high(confidence), have a high support(apper often). We may promote these item togeher.
+If this conditional propability is suffiently high(confidence), have a high support(appear often). We may promote these item togeher.
 
 ## Loading the data and inspect
 
@@ -37,6 +37,20 @@ itemFrequencyPlot(Groceries,support=0.01,cex.names=1.0) # Lav et plot.
 ```
 
 ## Extracting decision rulus. 
+
+Lift: Is the factor by which prediction improves when we apply the rule, compared to what we would be able to predict if we did not apply the rule
+- Interpretation: The increase from prior probability to conditional probability
+- If lift is "3" the interpretation is: 3 times more likely to be bought if the antecedent is bought compared to the prior.
+- In the below examples we see some very high lifts, some on +500. This is partially due to the low counts. 
+- And also because some dependencies are very strong (e.g. "Blue Spade, Pink Spade, Blue Rake" -> "Pink Rake"). 
+
+Support: How often should the item(s) occur in the dataset
+- When we set support = 0.01 we limit the dataset to avoid a full search (computationally infeasible)
+
+Confidence: An estimate of conditional probability
+- Minimum level of conditional probability is set to 0.3
+- E.g. the prob. of buying Milk when already having placed Bread in the basket should exceed 30%
+
 ```{r}
 
 # Extract association rules by having a minimum support of 0,01 = item appers in 1% of transactions
@@ -45,12 +59,20 @@ itemFrequencyPlot(Groceries,support=0.01,cex.names=1.0) # Lav et plot.
 groc.rules <- apriori(Groceries, parameter=list(supp=0.01, conf=0.3, 
                                                 target="rules")) 
 
+# Plot rules
+plot(retail.rules)
+
 # Filter the rules such that they have a lift above 3
-inspect(subset(groc.rules, lift > 3)) 
-
-
+inspect(subset(groc.rules, lift > 3))
 ```
+
 # Rules and margin calculations.
+
+We still calculate decision rules, but here we're able to inspect the profitability of the items.
+This would enable the analyst to only select decision rules for item combinations with high profitability.
+
+Previously, we could end up with a massively significant decision rule for some items with negative profitability.
+That's bad :) 
 
 ## Data preporations:
 ```{r}
@@ -74,7 +96,7 @@ names(retail.list) <- paste("Trans", 1:length(retail.list), sep="")
 # Look at a randomly chosen element
 library(car)
 set.seed(1234)
-some(retail.list)
+car::some(retail.list)
 
 # Remove original data
 rm(retail.raw)
@@ -82,9 +104,11 @@ rm(retail.raw)
 # Transform the data to a transactions object
 retail.trans <- as(retail.list, "transactions") # takes a few seconds
 summary(retail.trans)
+
 # Remove data in list format
 rm(retail.list)
 ```
+
 ## Preporations for margin calcualtion:
 
 ```{r}
@@ -132,10 +156,6 @@ retail.margsum <- function(items, itemMargins) {
 ```
 
 
-
-
-
-
 ## Finding and plotting rules
 ```{r}
 # Extract association rules with confidence 0,001 and confidence 0,4
@@ -143,8 +163,12 @@ retail.rules <- apriori(retail.trans, parameter=list(supp=0.001, conf=0.4))
 
 # Plot the resulting rules
 plot(retail.rules)
+
+# Inspect
+inspect(subset(retail.rules, lift > 3))
 ```
 ## Finding profit.
+
 ```{r}
 # Find the margin yourself for the items in basket {39,48} and their sum
 retail.margin[c("39", "48"), ]
@@ -160,19 +184,16 @@ sum(retail.margin[basket.items, ])
 retail.margsum(c("39", "48"), retail.margin)
 retail.margsum(list(t1=c("39", "45"), t2=c("31", "32")), retail.margin)
 retail.margsum(retail.trans[101:103], retail.margin)
-retail.margsum(retail.hi, retail.margin)
-retail.margsum(c("hello", "world"), retail.margin) # error!
+# retail.margsum(retail.hi, retail.margin) # just for the lolz
+# retail.margsum(c("hello", "world"), retail.margin) # error! # lolz agains
 retail.margsum(list(a=c("39", "45"), b=c("hello", "world"), c=c("31", "32")),
                retail.margin) # only the first and third are OK
-
-
-
 ```
 # Specific search rules
 
 ## Loading and inspecting data:
 ```{r}
-tr <- read.transactions('market_basket_transactions.csv', format = 'basket', 
+tr <- read.transactions('Data/market_basket_transactions.csv', format = 'basket', 
                         sep=',')
 
 # ITEM FREQUENCY 
@@ -214,6 +235,8 @@ subset.association.rules. <- association.rules[-subset.rules]
 # We can sort the rules by lift.
 sortedRules <- sort(association.rules,by="lift",decreasing=TRUE)
 inspect(sortedRules[1:10]) 
+
+plot(sortedRules)
 ```
 
 ## Specific rules on items
@@ -250,6 +273,7 @@ plot(subRules)
 # User and Item based recommendations
 
 ## Weird loading and data inspection 
+
 ```{r}
 library(readxl)
 library(plyr)
@@ -459,11 +483,11 @@ help(MovieLense)
 dim(MovieLense)
 
 #select only the users who have rated at least 50 movies or movies that had been rated more than 100 times
-(ratings_movies <- MovieLense[rowCounts(MovieLense) > 50, # This filters out users who have rated fewer than 50 movies.
-                              colCounts(MovieLense) > 100]) # This filters out movies that have been rated fewer than 100 times.
+ratings_movies <- MovieLense[rowCounts(MovieLense) > 50, # This filters out users who have rated fewer than 50 movies.
+                              colCounts(MovieLense) > 100] # This filters out movies that have been rated fewer than 100 times.
 
 # use the minimum number of items purchased by any user to decide item number to keep
-(min(rowCounts(ratings_movies)))
+min(rowCounts(ratings_movies))
 
 n_fold <- 4
 items_to_keep <- 15 # Lowest rating is 18 - we use 15 of them and use the rest to predict
@@ -476,7 +500,6 @@ eval_sets <- evaluationScheme(data = ratings_movies, method = "cross-validation"
 
 
 models  <- list(
- 
   IBCF=list(name="IBCF",param=list(method = "cosine")),
   UBCF=list(name="UBCF", param=list(method = "pearson")),
   SVD = list(name="SVD", param=list(k=50)),
@@ -577,3 +600,38 @@ eval_accuracy_svdf
  
 ```
 
+# IBCF vs UBCF
+
+Item-Based and User-Based Collaborative Filtering are two primary techniques used in recommendation systems, each with distinct advantages and challenges. Here's an outline of their pros and cons:
+
+## Item-Based Collaborative Filtering (IBCF)
+
+Pros:
+- Stability Over Time: Items usually don't change their nature quickly. For example, the characteristics of a movie or a book remain constant, making the item-item similarities relatively stable over time.
+- Scalability: Since the number of items is generally smaller than the number of users, computing item-item similarities can be more scalable in certain contexts.
+- Transparency: Recommendations can be more interpretable (e.g., recommending a movie because it's similar to others a user liked).
+- Less Noise: Recommendations based on item similarity often involve less noise than those based on user behavior, which can be more erratic.
+
+Cons:
+- Cold Start for New Items: New items with few interactions are challenging to recommend because their similarity to other items cannot be accurately calculated until they receive sufficient ratings.
+- Limited Diversity: The system might recommend items too similar to those the user has already interacted with, potentially leading to a filter bubble where new or diverse interests are not adequately explored.
+Sparse Data Issues: When the item interaction data is sparse (many items but few ratings), calculating reliable similarities can be difficult.
+
+## User-Based Collaborative Filtering (UBCF)
+
+Pros:
+- Rich Context: User-based methods can capture complex user behaviors and preferences, potentially leading to more personalized recommendations.
+- Flexibility: This method can adapt quickly to changes in user preferences, as it directly uses user feedback for recommendations.
+- Immediate Integration of New Items: New items can be recommended as soon as any user interacts with them, as long as they are similar to other users in their tastes.
+
+Cons:
+- Scalability Issues: As the number of users grows, computing similarities between them becomes computationally expensive and less practical.
+- Cold Start for New Users: New users without sufficient interaction history pose a challenge because there's little data to base any recommendations on.
+- Dynamic Data Requirements: User preferences can change over time, necessitating frequent re-computation of similarities to maintain recommendation accuracy.
+- Privacy Concerns: Storing and processing detailed user profiles might raise privacy issues, especially if sensitive or personal data is involved.
+- Choosing Between IBCF and UBCF
+
+## Decision
+The choice between IBCF and UBCF often depends on the specific characteristics of the dataset and the application domain. IBCF is generally preferred when there is a relatively stable set of items and when the computational resources are limited for handling large user bases. UBCF might be more suitable in environments where user interaction data is rich and continuously updated, allowing the system to adapt quickly to changes in user behavior.
+
+Ultimately, hybrid approaches are frequently employed to mitigate the limitations of both IBCF and UBCF, aiming to enhance recommendation quality and user satisfaction.
