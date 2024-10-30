@@ -1,0 +1,7 @@
+*.Rproj
+.Rproj.user
+.Rproj.user/
+*.Rhistory
+*.epub
+*.RData
+*.DS_Store

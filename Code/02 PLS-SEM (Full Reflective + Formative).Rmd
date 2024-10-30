@@ -1,0 +1,335 @@
+---
+title: "02 PLS-SEM (Full Reflective + Formative)"
+author: "Morten Gade"
+date: "2024-05-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages and data
+
+```{r}
+library(seminr)
+corp_rep_data <- read.csv(file ="Data/Corporate Reputation Data.csv",header=TRUE,sep=";")
+```
+
+# Full model
+
+```{r}
+# Create measurement model
+corp_rep_mm_ext <- constructs(
+  composite("QUAL", multi_items("qual_", 1:8), weights = mode_B),
+  composite("PERF", multi_items("perf_", 1:5), weights = mode_B),
+  composite("CSOR", multi_items("csor_", 1:5), weights = mode_B),
+  composite("ATTR", multi_items("attr_", 1:3), weights = mode_B),
+  composite("COMP", multi_items("comp_", 1:3), weights = mode_A),
+  composite("LIKE", multi_items("like_", 1:3), weights = mode_A),
+  composite("CUSA", single_item("cusa")),
+  composite("CUSL", multi_items("cusl_", 1:3), weights = mode_A))
+
+# Create structural model
+corp_rep_sm_ext <- relationships(
+  paths(from = c("QUAL", "PERF", "CSOR", "ATTR"), to = c("COMP", "LIKE")),
+  paths(from = c("COMP", "LIKE"), to = c("CUSA", "CUSL")),
+  paths(from = c("CUSA"), to = c("CUSL")))
+
+# Estimate the model
+corp_rep_pls_model_ext <- estimate_pls(data = corp_rep_data,
+                                       measurement_model = corp_rep_mm_ext,
+                                       structural_model = corp_rep_sm_ext,
+                                       missing = mean_replacement,
+                                       missing_value = "-99")
+
+# Summarizing the results
+summary_corp_rep_ext <- summary(corp_rep_pls_model_ext)
+```
+
+# Measurement model evaluation (reflective part)
+
+## Loadings and indicator reliability
+
+For the reflective part we use the LOADINGS.
+The loading is a correlations between a (reflectively measured) construct and an indicator.
+
+Since we assume the indicator value is a "manifestation" of the construct, the correlation should be high.
+
+We can also inspect the amount of variance explained IN the indicator BY the construct.
+This is calculated by squaring the loading. 
+
+Rules-of-thumb:
+- Loading > 0.708
+- Variance Explained > 0.50
+
+```{r}
+# Inspect the indicator loadings
+summary_corp_rep_ext$loadings # Should be higher than 0.708
+
+# Inspect the indicator reliability
+summary_corp_rep_ext$loadings^2 # Shouigher than 0.5
+```
+
+## Construct Reliability and Convergent Validity
+
+According to slides:
+- Cronbach's Alpha regards Construct Reliability
+- AVE regards Convergent Validity
+
+Cronbach's Alpha:
+- Cronbach's alpha should exceed 0.7.
+- It typically underestimates construct reliability.
+- High intercorrelation between the indicators of a construct increases Cronbach's alpha.
+
+AVE:
+- Should be above 0.5
+- AVE = Average Variance Extracted
+- The average proportion of variance explained by our construct
+
+```{r}
+# Inspect the internal consistency reliability
+summary_corp_rep_ext$reliability
+```
+## Discriminant validity
+
+Discriminant validity: Are the constructs unique?
+
+FL Criteria:
+- The square root of AVE must be higher than the correlation between other reflectively measured constructs
+- Look at the reflective constructs only. In this specific case: COMP, LIKE, CUSA, CUSL
+- For each of these constructs, the AVE is higher than any corr between that construct and the other three constructs
+
+```{r}
+# Table of the FL criteria
+summary_corp_rep_ext$validity$fl_criteria
+```
+
+HTMT Criteria:
+- Look at estimates as well as bootstrap 95% CI
+- If interval contains "1" there is lack of discriminant validity
+- If constructs are conceptually very similar: HTMT < 0.9
+- If constructs are conceptually more distinct: HTMT < 0.85
+- Ideally: No intervals containing 1, with all interval upper bounds below 0.85.
+- This should be assessed for any combination of reflectively measured/single item constructs
+
+
+```{r}
+# HTMT criterion - no bootstrapping
+# summary_corp_rep_ext$validity$htmt 
+
+# Bootstrap the model
+boot_corp_rep_ext <- bootstrap_model(seminr_model = corp_rep_pls_model_ext,
+                                     nboot = 1000,cores = NULL,seed = 123)
+sum_boot_corp_rep_ext <- summary(boot_corp_rep_ext, alpha = 0.10)
+
+# Extract the bootstrapped HTMT
+sum_boot_corp_rep_ext$bootstrapped_HTMT
+```
+
+# Measurement model evaluation (formative part)
+
+Now turn towards the part of the model with formatively measured constructs.
+
+## Convergent validity
+
+Here, we look at the path coefficient between the formative construct and the reflective construct.
+Both constructs measure the same concept. We assume the reflective construct to correctly capture the concept.
+
+The path coefficient should be above 0.7. Meaning our formative measure also truly captures the concept. 
+In the output above, the path coefficient is 0.874. 
+
+Do this for each of the formative constructs.
+
+```{r}
+# Reduncancy analysis / convergent validity
+ATTR_redundancy_mm <- constructs(
+  composite("ATTR_F", multi_items("attr_", 1:3), weights = mode_B),
+  composite("ATTR_G", single_item("attr_global")))
+
+# Create structural model
+ATTR_redundancy_sm <- relationships(
+  paths(from = c("ATTR_F"), to = c("ATTR_G")))
+
+# Estimate the model
+ATTR_redundancy_pls_model <- estimate_pls(data = corp_rep_data,
+                                          measurement_model = ATTR_redundancy_mm,
+                                          structural_model = ATTR_redundancy_sm,
+                                          missing = mean_replacement,
+                                          missing_value = "-99")
+
+# Summarize the model
+sum_ATTR_red_model <- summary(ATTR_redundancy_pls_model)
+
+sum_ATTR_red_model
+```
+
+## Collinearity analysis
+
+Look at the Variable Inflation Factor.
+Should be below 5 for each indicator. Otherwise there are collinearity issues. 
+
+If there are problems, consider removing one of the indicators.
+
+```{r}
+summary_corp_rep_ext$validity$vif_items
+```
+
+## Significance of indicators
+
+Check weight estimates.
+
+Significance testing: T-test using the bootstrapped standard error.
+
+Check 95% CI: Does it contain 0?
+
+```{r}
+# Summarize the results of the bootstrap
+
+# alpha sets the specified level for significance, i.e. 0.05
+sum_boot_corp_rep_ext <- summary(boot_corp_rep_ext, alpha = 0.05)
+
+# Inspect the bootstrapping results for indicator weights
+sum_boot_corp_rep_ext$bootstrapped_weights
+
+# Inspect the bootstrapping results for indicator loadings
+sum_boot_corp_rep_ext$bootstrapped_loadings
+```
+
+# Structural model evaluation
+
+Cannot use the bootstrapped model (sum_boot_corp_rep_ext) for many of these.
+In that case, use the original model.
+
+## Path coefficients
+
+Check path coefficients.
+
+Significance testing: T-test using the bootstrapped standard error.
+
+Check 95% CI: Does it contain 0?
+
+```{r}
+# Inspect the bootstrapping results for path coefficients
+sum_boot_corp_rep_ext$bootstrapped_paths
+
+# Not sure what the difference is between the line above and the one below
+# sum_boot_corp_rep_ext$bootstrapped_total_paths
+```
+## Construct collinearity
+
+Should not be too high (criteria for indicators: not above 5).
+If too high: the constructs are similar
+
+```{r}
+# Inspect the structural model collinearity VIF
+summary_corp_rep_ext$vif_antecedents
+```
+
+
+## Rsquare
+
+```{r}
+# Inspect the model RSquares
+summary_corp_rep_ext$paths
+```
+
+## Effect sizes
+
+Guidelines for assessment:
+- $f^2 < 0.02$: no effect
+- $0.02 \leq f^2 < 0.15$: small effect
+- $0.15 \leq f^2 < 0.35$: medium effect
+- $f^2 > 0.35$: large effect
+
+```{r}
+# Inspect the effect sizes
+summary_corp_rep_ext$fSquare
+```
+
+## Predictive power
+
+```{r}
+# Generate the model predictions
+predict_corp_rep_ext <- predict_pls(model = corp_rep_pls_model_ext,
+                                    technique = predict_DA, noFolds = 10, 
+                                    reps = 10)
+# Summarize the prediction results
+sum_predict_corp_rep_ext <- summary(predict_corp_rep_ext)
+# Analyze the distribution of prediction error
+par(mfrow=c(1,3))
+plot(sum_predict_corp_rep_ext, indicator = "cusl_1")
+plot(sum_predict_corp_rep_ext, indicator = "cusl_2")
+plot(sum_predict_corp_rep_ext, indicator = "cusl_3")
+par(mfrow=c(1,1))
+
+# Compute the prediction statistics
+sum_predict_corp_rep_ext
+```
+
+# Structural Model Comparison
+
+Create two models:
+
+```{r}
+# Create measurement model
+measurement_model <- constructs(
+  composite("QUAL", multi_items("qual_", 1:8), weights = mode_B),
+  composite("PERF", multi_items("perf_", 1:5), weights = mode_B),
+  composite("CSOR", multi_items("csor_", 1:5), weights = mode_B),
+  composite("ATTR", multi_items("attr_", 1:3), weights = mode_B),
+  composite("COMP", multi_items("comp_", 1:3)),
+  composite("LIKE", multi_items("like_", 1:3)),
+  composite("CUSA", single_item("cusa")),
+  composite("CUSL", multi_items("cusl_", 1:3)))
+
+# Model 1
+structural_model1 <- relationships(
+  paths(from = c("QUAL","PERF","CSOR","ATTR"), to = c("COMP", "LIKE")),
+  paths(from = c("COMP","LIKE"), to = c("CUSA", "CUSL")),
+  paths(from = "CUSA", to = c("CUSL")))
+
+# Model 2
+structural_model2 <- relationships(
+  paths(from = c("QUAL","PERF","CSOR","ATTR"), to = c("COMP", "LIKE", "CUSA")),
+  paths(from = c("COMP","LIKE"), to = c("CUSA", "CUSL")),
+  paths(from = "CUSA", to = c("CUSL")))
+```
+
+Estimate and summarize models
+
+```{r}
+# Model 1
+pls_model1 <- estimate_pls(data = corp_rep_data, 
+                           measurement_model = measurement_model,
+                           structural_model = structural_model1,
+                           missing_value = "-99")
+sum_model1 <- summary(pls_model1)
+
+# Model 2
+pls_model2 <- estimate_pls(data = corp_rep_data,
+                           measurement_model = measurement_model,
+                           structural_model = structural_model2,
+                           missing_value = "-99")
+sum_model2 <- summary(pls_model2)
+```
+Inspet Information Criteria
+
+```{r}
+# Subset the matrix to only return the BIC row and CUSL column
+sum_model1$it_criteria["BIC", "CUSA"]
+
+# Collect the vector of BIC values for CUSL
+itcriteria_vector <- c(sum_model1$it_criteria["BIC","CUSA"],
+                       sum_model2$it_criteria["BIC","CUSA"])
+
+# Assign the model names to IT Criteria vector
+names(itcriteria_vector) <- c("Model1", "Model2")
+
+# Inspect the IT Criteria vector for competing models
+itcriteria_vector
+
+# Calculate the model BIC Akaike weights
+compute_itcriteria_weights(itcriteria_vector)
+```
+

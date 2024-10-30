@@ -1,0 +1,637 @@
+---
+title: "Product recommendation"
+output: Mister Mads
+date: "2024-06-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(arules)
+library(arulesViz)
+```
+
+# Decission rules 
+
+When looking at sales data, we are able to determine whether products are bougt more often together, than their posterior probability indicates.
+
+When making product recommendations we are in essense looking at the conditional probability of buy e.g milk given that you have bought meat.
+
+If this conditional propability is suffiently high(confidence), have a high support(appear often). We may promote these item togeher.
+
+## Loading the data and inspect
+
+```{r pressure, echo=FALSE}
+# Load the grocery data
+data(Groceries)
+
+# Have a look at the data set/container - it is transactions
+summary(Groceries)
+
+# Have a look at the first 3 transactions 
+inspect(head(Groceries,3))
+
+# Look at the 30 most frequent items and plot it
+tail(sort(itemFrequency(Groceries)),30) 
+itemFrequencyPlot(Groceries,support=0.01,cex.names=1.0) # Lav et plot.
+
+```
+
+## Extracting decision rulus. 
+
+Lift: Is the factor by which prediction improves when we apply the rule, compared to what we would be able to predict if we did not apply the rule
+- Interpretation: The increase from prior probability to conditional probability
+- If lift is "3" the interpretation is: 3 times more likely to be bought if the antecedent is bought compared to the prior.
+- In the below examples we see some very high lifts, some on +500. This is partially due to the low counts. 
+- And also because some dependencies are very strong (e.g. "Blue Spade, Pink Spade, Blue Rake" -> "Pink Rake"). 
+
+Support: How often should the item(s) occur in the dataset
+- When we set support = 0.01 we limit the dataset to avoid a full search (computationally infeasible)
+
+Confidence: An estimate of conditional probability
+- Minimum level of conditional probability is set to 0.3
+- E.g. the prob. of buying Milk when already having placed Bread in the basket should exceed 30%
+
+```{r}
+
+# Extract association rules by having a minimum support of 0,01 = item appers in 1% of transactions
+# and have a confidende level conditional probability higher than 0,3.
+# Specify apriori to make sure we dont make a full search.
+groc.rules <- apriori(Groceries, parameter=list(supp=0.01, conf=0.3, 
+                                                target="rules")) 
+
+# Plot rules
+plot(retail.rules)
+
+# Filter the rules such that they have a lift above 3
+inspect(subset(groc.rules, lift > 3))
+```
+
+# Rules and margin calculations.
+
+We still calculate decision rules, but here we're able to inspect the profitability of the items.
+This would enable the analyst to only select decision rules for item combinations with high profitability.
+
+Previously, we could end up with a massively significant decision rule for some items with negative profitability.
+That's bad :) 
+
+## Data preporations:
+```{r}
+## Load, inspect, and prepare data for mining
+# Load the supermarket data
+retail.raw <- readLines("http://goo.gl/FfjDAO")
+
+# Have a look at the data set/container
+head(retail.raw);tail(retail.raw) # Se 
+summary(retail.raw)
+
+# Prepare for mining
+retail.list <- strsplit(retail.raw, " ")
+
+# And check the result
+str(retail.list) # Se hvilke items som er i hver handelskurv.
+
+# Assign a name to each row/transaction
+names(retail.list) <- paste("Trans", 1:length(retail.list), sep="")
+
+# Look at a randomly chosen element
+library(car)
+set.seed(1234)
+car::some(retail.list)
+
+# Remove original data
+rm(retail.raw)
+
+# Transform the data to a transactions object
+retail.trans <- as(retail.list, "transactions") # takes a few seconds
+summary(retail.trans)
+
+# Remove data in list format
+rm(retail.list)
+```
+
+## Preporations for margin calcualtion:
+
+```{r}
+## Prepare the introduction of item profitability (margin)
+# First get item names
+retail.itemnames <- sort(unique(unlist(as(retail.trans, "list"))))
+head(retail.itemnames); tail(retail.itemnames)
+# Simulate per-item margin data
+set.seed(03870)
+retail.margin <- data.frame(margin=rnorm(length(retail.itemnames),
+                                         mean=0.30, sd=0.30))
+
+# Make a more generic function to calculate margin on a market basket.
+retail.margsum <- function(items, itemMargins) {
+  # Input: 
+  #     "items" == item names, rules or transactions in arules format
+  #     "itemMargins" == a data frame of profit margin indexed by name
+  # Output: 
+  #     look up the item margins, and return the sum
+  library(arules)
+  # check the class of "items" and coerce appropriately to an item list
+  if (class(items) == "rules") {
+    tmp.items <- as(items(items), "list") # rules ==> item list
+  } else if (class(items) == "transactions") {
+    tmp.items <- as(items, "list") # transactions ==> item list
+  } else if (class(items) == "list") {
+    tmp.items <- items # it’s already an item list!
+  } else if (class(items) == "character") {
+    tmp.items <- list(items) # characters ==> item list
+  } else {
+    stop("Don’t know how to handle margin for class ", class(items))
+  }
+  # make sure the items we found are all present in itemMargins
+  good.items <- unlist(lapply(tmp.items, function (x)
+    all(unlist(x) %in% rownames(itemMargins))))
+  if (!all(good.items)) {
+    warning("Some items not found in rownames of itemMargins. ",
+            "Lookup failed for element(s):\n",
+            which(!good.items), "\nReturning only good values.")
+    tmp.items <- tmp.items[good.items]
+  }
+  # and add them up
+  return(unlist(lapply(tmp.items, function(x) sum(itemMargins[x, ]))))
+}
+```
+
+
+## Finding and plotting rules
+```{r}
+# Extract association rules with confidence 0,001 and confidence 0,4
+retail.rules <- apriori(retail.trans, parameter=list(supp=0.001, conf=0.4))
+
+# Plot the resulting rules
+plot(retail.rules)
+
+# Inspect
+inspect(subset(retail.rules, lift > 3))
+```
+## Finding profit.
+
+```{r}
+# Find the margin yourself for the items in basket {39,48} and their sum
+retail.margin[c("39", "48"), ]
+sum(retail.margin[c("39", "48"), ]) # Although there may be a rule between these items, we may not want to promote them as net profit is negative.
+
+# Get items in third transaction and calculate sum of their margins
+(basket.items <- as(retail.trans[3], "list")[[1]])
+retail.margin[basket.items, ]
+sum(retail.margin[basket.items, ])
+
+
+# Use the function retail margsum function to get the margin for specific marked baskets.
+retail.margsum(c("39", "48"), retail.margin)
+retail.margsum(list(t1=c("39", "45"), t2=c("31", "32")), retail.margin)
+retail.margsum(retail.trans[101:103], retail.margin)
+# retail.margsum(retail.hi, retail.margin) # just for the lolz
+# retail.margsum(c("hello", "world"), retail.margin) # error! # lolz agains
+retail.margsum(list(a=c("39", "45"), b=c("hello", "world"), c=c("31", "32")),
+               retail.margin) # only the first and third are OK
+```
+# Specific search rules
+
+## Loading and inspecting data:
+```{r}
+tr <- read.transactions('Data/market_basket_transactions.csv', format = 'basket', 
+                        sep=',')
+
+# ITEM FREQUENCY 
+# Create an item frequency plot for the top 20 items
+if (!require("RColorBrewer")) {
+  # install color package of R
+  #install.packages("RColorBrewer")
+  #include library RColorBrewer
+#  library(RColorBrewer)
+}
+itemFrequencyPlot(tr,topN=20,type="absolute",col=brewer.pal(8,'Pastel2'), 
+                  main="Absolute Item Frequency Plot")
+itemFrequencyPlot(tr,topN=20,type="relative",col=brewer.pal(8,'Pastel2'),
+                  main="Relative Item Frequency Plot") # Procent
+
+```
+
+## Extract rules 
+```{r}
+# Min Support as 0.001, confidence as 0.8.
+# We will maximum look at 10 items, so maximum length of a set is 10.
+association.rules <- apriori(tr, 
+                             parameter = list(supp=0.001, conf=0.8,maxlen=10)) # Maxlen = hvor mange items = noget andet.
+summary(association.rules)
+#inspect the 10 first association rules
+inspect(association.rules[1:10]) 
+
+# Limiting the number and size of rules
+shorter.association.rules <- apriori(tr, 
+                                     parameter = list(supp=0.001, conf=0.8,maxlen=3)) # This is changed.
+
+# Removing redundant rules - get subset rules in vector
+subset.rules <- which(colSums(is.subset(association.rules,association.rules))>1) 
+length(subset.rules)  #> 3913
+
+# Remove subset rules.
+subset.association.rules. <- association.rules[-subset.rules] 
+
+# We can sort the rules by lift.
+sortedRules <- sort(association.rules,by="lift",decreasing=TRUE)
+inspect(sortedRules[1:10]) 
+
+plot(sortedRules)
+```
+
+## Specific rules on items
+```{r}
+# For example, to find what customers buy before buying 'METAL' run the 
+# following line of code
+# lhs = antecedents of metal the left hand side is the unknown
+metal.association.rules <- apriori(tr, parameter = list(supp=0.001, conf=0.8),
+                                   appearance = list(default="lhs",rhs="METAL"))
+# We get five association rules telling us what customers buy, that might lead 
+# to buying metal as well.
+inspect(metal.association.rules)
+
+# Similarly, to find the answer to the question Customers who bought METAL 
+# also bought.... you will keep METAL on lhs:
+# rhs = consequence (decendent)
+metal.association.rules <- apriori(tr, parameter = list(supp=0.001, conf=0.8),
+                                   appearance = list(lhs="METAL",default="rhs"))
+
+# Decoration -> Metal and Metal -> Decoration have the same support, lift, 
+# and confidence. 
+inspect(head(metal.association.rules))
+
+ 
+##### VISUALIZING ASSOCIATION RULES #####
+# Filter rules with confidence greater than 0.4 or 40%.
+# The plot shows that rules with high lift have low support. You can use the 
+# following options for the plot.
+subRules<-association.rules[quality(association.rules)$confidence>0.4] # Dette finder ting som ikke optræder ofte, men som har høj profit.
+#Plot SubRules the more red color, the higher is the lift.
+plot(subRules)
+```
+
+# User and Item based recommendations
+
+## Weird loading and data inspection 
+
+```{r}
+library(readxl)
+library(plyr)
+library(tidyverse)
+library(arules)
+library(arulesViz)
+library(RColorBrewer)
+library(recommenderlab)
+
+### Step 1 - storage
+data(MovieLense)
+help(MovieLense)
+class(MovieLense)
+dim(MovieLense)
+# Data is given in realRatingMatrix format  ; Optimized to store sparse matrices
+str(MovieLense,vec.len=2) #not as we normally reference list elements by \\$ but \\@
+methods(class=class(MovieLense)) # methods applicable to this class
+
+
+### Step 2 - explore data
+## Loading the metadata that gets loaded with main dataset
+moviemeta <- MovieLenseMeta
+class(moviemeta)
+colnames(moviemeta)
+
+## What do we know about the films?
+library(pander)
+pander(head(moviemeta,2),caption = "First few Rows within Movie Meta Data ")
+
+# Look at the first few ratings of the first user
+head(as(MovieLense[1,], "list")[[1]])
+# Number of ratings per user
+hist(rowCounts(MovieLense))
+# Number of ratings per movie
+hist(colCounts(MovieLense))
+# Top 10 movies
+movie_watched <- data.frame(
+  movie_name = names(colCounts(MovieLense)),
+  watched_times = colCounts(MovieLense)
+)
+top_ten_movies <- movie_watched[order(movie_watched$watched_times, decreasing = TRUE), ][1:10, ] 
+# Plot top 10
+ggplot(top_ten_movies) + aes(x=movie_name, y=watched_times) + 
+  geom_bar(stat = "identity",fill = "firebrick4", color = "dodgerblue2") + xlab("Movie Tile") + ylab("Count") +
+  theme(axis.text = element_text(angle = 40, hjust = 1)) 
+
+## What do we know about the ratings
+summary(getRatings(MovieLense))
+# Plot the ratings
+data.frame(ratings=getRatings(MovieLense)) %>%
+  ggplot(aes(ratings)) + geom_bar(width=0.75)+
+  labs(title='MovieLense Ratings Distribution')
+```
+
+## Splitting data:
+```{r}
+### Step 3 - split in training and test
+# Training and test set: At least 30 items evaluated or at least 100 users for each item
+rates <- MovieLense[rowCounts(MovieLense) > 30, colCounts(MovieLense) > 100]
+rates1 <- rates[rowCounts(rates) > 30,]
+# We randomly define the which_train vector that is True for users in the training set and FALSE for the others.
+# We will set the probability in the training set as 80%
+set.seed(1234)
+which_train <- sample(x = c(TRUE, FALSE), size = nrow(rates1), replace = TRUE, prob = c(0.8, 0.2))
+# Define the training and the test sets
+recc_data_train <- rates1[which_train, ]
+recc_data_test <- rates1[!which_train, ]
+```
+
+
+## Building IBCF yourself.
+```{r}
+## Item-based CF
+# IBCF: Item-based collaborative filtering
+# Let's build the recommender IBCF - cosine:
+recc_model <- Recommender(data = recc_data_train, method = "IBCF", parameter = list(k = 30)) 
+# We have now created a IBCF Recommender Model
+# We will define n_recommended that defines the number of items to recommend to 
+# each user and with the predict function, create prediction(recommendations) for the test set.
+n_recommended <- 5 # Makes 5 recommendations for each customer
+recc_predicted <- predict(object = recc_model, newdata = recc_data_test, n = n_recommended) # Use model to predict unseen data.
+
+# This is the recommendation for the first user
+recc_predicted@items[[1]]
+
+# Now let's define a list with the recommendations for each user
+recc_matrix <- lapply(recc_predicted@items, function(x){
+  colnames(rates)[x]
+})
+# Let's take a look the recommendations for the first four users:
+recc_matrix[1:4]
+
+```
+
+## UBCF yourself
+```{r}
+## User-based CF
+# UBCF = User-based collaborative filtering
+# The method computes the similarity between users with cosine
+# Let's build a recommender model leaving the parameters to their defaults. 
+recc_model <- Recommender(data = recc_data_train, method = "UBCF") # Making model on training data 
+
+# A UBCF recommender has now been created
+recc_predicted <- predict(object = recc_model, newdata = recc_data_test, n = n_recommended) # Makes predictions on the unseen data.
+
+# Let's define a list with the recommendations to the test set users.
+recc_matrix <- sapply(recc_predicted@items, function(x) {
+  colnames(rates)[x]
+})
+# Again, let's look at the first four users
+recc_matrix[,1:4]
+```
+
+## Cross validation
+```{r}
+# Cross validationn
+# We can split the data into some chunks, take a chunk out as the test set, and evaluate the accuracy. Then we can 
+# do the same with each other chunk and compute the average accuracy. Here we construct the evaluation model
+n_fold <- 4 
+rating_threshold <- 4 # threshold at which we consider the item to be good - emply class evaluation
+items_to_keep <- 20 # given=20 means that while testing the model use only 20 randomly picked ratings from every 
+# user to predict the unknown ratings in the test set the known data set has the ratings specified by given and the 
+# unknown data set the remaining ratings used for validation
+eval_sets <- evaluationScheme(data = rates1, method = "cross-validation", k = n_fold, # Med evalutationScheme brug alt data, den deler selv.
+                              given = items_to_keep, goodRating = rating_threshold) # Goodrating = binary classificaton
+
+
+#IBCF
+model_to_evaluate <- "IBCF"
+model_parameters <- NULL  #   we use the standard settings
+eval_recommender <-Recommender(data = getData(eval_sets, "train"), method = model_to_evaluate, parameter = model_parameters)
+# The IBCF can recommend new items and predict their ratings. In order to build 
+# the model, we need to specify how many items we want to recommend, for example, 5.
+items_to_recommend <- 5
+
+# We can build the matrix with the predicted ratings using the predict function:
+eval_prediction <- predict(object = eval_recommender, newdata = getData(eval_sets, "known"), n = items_to_recommend, type = "ratings") # rating = RMSE # Known for at predicte
+# By using the calcPredictionAccuracy, we can calculate the Root mean square 
+# error (RMSE), Mean squared error (MSE), and the Mean absolute error (MAE).
+eval_accuracy <- calcPredictionAccuracy(
+  x = eval_prediction, data = getData(eval_sets, "unknown"), byUser = TRUE # Dette er på person niveau
+  )
+# This is a small sample of the results for the Prediction and Accuracy
+head(eval_accuracy)
+# Now, let's take a look at the RMSE by each user
+ggplot(data=as.data.frame(eval_accuracy),aes(x=RMSE)) + geom_histogram(binwidth = 0.1) +
+  ggtitle("Distribution of the RMSE by user")
+# However, we need to evaluate the model as a whole, so we will set the byUser to False
+eval_accuracy <- calcPredictionAccuracy(
+  x = eval_prediction, data = getData(eval_sets, "unknown"), byUser = FALSE # Dette er for hele populationen 
+)
+eval_accuracy #for IBCF
+
+## Evaluation of IBCF top-N
+# Confusion matrix good threshold =4
+results <- evaluate(x = eval_sets, method = model_to_evaluate, n = seq(10, 100, 10)) #n number top-n recommendations
+# results object is an evaluationResults object containing the results of the evaluation.
+# Each element of the list corresponds to a different split of the k-fold.
+# Let's look at the first element
+head(getConfusionMatrix(results)[[1]])
+# In this case, look at the first four columns
+# True Positives (TP): These are recommended items that have been purchased.
+# False Positives (FP): These are recommended items that haven't been purchased
+# False Negatives (FN): These are not recommended items that have been purchased.
+# True Negatives (TN): These are not recommended items that haven't been purchased.
+# If we want to take account of all the splits at the same time, we can just sum up the indices:
+columns_to_sum <- c("TP", "FP", "FN", "TN")
+indices_summed <- Reduce("+", getConfusionMatrix(results))[, columns_to_sum]
+head(indices_summed)
+
+## Building an ROC curve. Will need these factors
+# 1. True Positive Rate (TPR): Percentage of purchased items that have been recommended. TP/(TP + FN)
+# 2. False Positive Rate (FPR): Percentage of not purchased items that have been recommended. FP/(FP + TN)
+plot(results, annotate = TRUE, main = "ROC curve")
+
+## We can also look at the accuracy metrics as well
+# precision: Percentage of recommended items that have been purchased. FP/(TP + FP)
+# recall: Percentage of purchased items that have been recommended. TP/(TP + FN) = True Positive Rate
+plot(results, "prec/rec", annotate = TRUE, main = "Precision-Recall")
+
+## Comparing models
+models_to_evaluate <- list(IBCF_cos = list(name = "IBCF", param = list(method = "cosine")), 
+                           IBCF_cor = list(name = "IBCF", param = list(method = "pearson")), 
+                           UBCF_cos = list(name = "UBCF", param = list(method = "cosine")), 
+                           UBCF_cor = list(name = "UBCF", param = list(method = "pearson")), 
+                           random = list(name = "RANDOM", param = NULL))
+# In order to evaluate the models, we need to test them, varying the number of items.
+n_recommendations <- c(1,5,seq(10,100,10))
+# Now let's run and evaluate the models
+list_results <- evaluate(x = eval_sets, method = models_to_evaluate, n = n_recommendations)
+# Plot the ROC curve
+plot(list_results, annotate = 1, legend = "topleft")
+title("ROC curve")
+# Plot precision-recall
+plot(list_results, "prec/rec", annotate = 1, legend = "bottomright", ylim = c(0,0.4))
+title("Precision-recall")
+```
+# Automatic recommendation
+```{r}
+library(recommenderlab)
+library(tidyverse)
+
+
+data(MovieLense)
+class(MovieLense)
+help(MovieLense)
+dim(MovieLense)
+
+#select only the users who have rated at least 50 movies or movies that had been rated more than 100 times
+ratings_movies <- MovieLense[rowCounts(MovieLense) > 50, # This filters out users who have rated fewer than 50 movies.
+                              colCounts(MovieLense) > 100] # This filters out movies that have been rated fewer than 100 times.
+
+# use the minimum number of items purchased by any user to decide item number to keep
+min(rowCounts(ratings_movies))
+
+n_fold <- 4
+items_to_keep <- 15 # Lowest rating is 18 - we use 15 of them and use the rest to predict
+rating_threshold <- 3 # if scores is 3 or above we would recommend.
+
+
+# Use k-fold to validate models
+set.seed(1234)
+eval_sets <- evaluationScheme(data = ratings_movies, method = "cross-validation",k = n_fold, given = items_to_keep, goodRating = rating_threshold)
+
+
+models  <- list(
+  IBCF=list(name="IBCF",param=list(method = "cosine")),
+  UBCF=list(name="UBCF", param=list(method = "pearson")),
+  SVD = list(name="SVD", param=list(k=50)),
+  SVDF=list(name="SVDF", param=list(k=50))
+)
+
+
+# varying the number of items we want to recommend to users
+n_rec <- c(1, 5, seq(10, 100, 10))
+
+# evaluating the recommendations
+results <- evaluate(x = eval_sets, method = models, n= n_rec)
+
+# extract the related average confusion matrices
+(avg_matrices <- lapply(results, avg))
+
+plot(results, annotate=TRUE)
+plot(results, "prec/rec", annotate = TRUE, main = "Precision-Recall")
+
+#Building the predition model on the training data.
+recommender_ibcf <- Recommender(data = getData(eval_sets, "train"),
+                                method = "IBCF",parameter = list(method = "cosine"))
+
+recommender_ubcf <- Recommender(data = getData(eval_sets, "train"),
+                                method = "UBCF",parameter = list(method = "pearson"))
+
+recommender_svd <- Recommender(data = getData(eval_sets, "train"),
+                                method = "SVD",parameter = list(k=50)) # K = 50 = 50 faktorer.
+
+recommender_svdf <- Recommender(data = getData(eval_sets, "train"),
+                               method = "SVDF",parameter = list(k=50))
+
+items_to_recommend <- 10
+
+
+# Getting the RMSE by specifying ratings.
+# WE specify known as it need the training data observation to make a prediction 
+eval_prediction_ibcf <- predict(object = recommender_ibcf, newdata = getData(eval_sets, "known"), n = items_to_recommend, type = "ratings")
+
+eval_prediction_ubcf <- predict(object = recommender_ubcf, newdata = getData(eval_sets, "known"), n = items_to_recommend, type = "ratings")
+
+eval_prediction_svd <- predict(object = recommender_svd, newdata = getData(eval_sets, "known"), n = items_to_recommend, type = "ratings")
+
+eval_prediction_svdf <- predict(object = recommender_svdf, newdata = getData(eval_sets, "known"), n = items_to_recommend, type = "ratings")
+# compare RMSE for different models
+######################RANDOM######################
+
+# Here we use unknown so we can compare
+
+#UBCF user based
+
+eval_accuracy_ubcf <- calcPredictionAccuracy(
+  x = eval_prediction_ubcf, data = getData(eval_sets, "unknown"), byUser = F)
+
+eval_accuracy_ubcf_user <- calcPredictionAccuracy(
+  x = eval_prediction_ubcf, data = getData(eval_sets, "unknown"), byUser = TRUE)
+
+
+head(eval_accuracy_ubcf_user)
+
+
+
+#IBCF item based
+eval_accuracy_ibcf <- calcPredictionAccuracy(
+  x = eval_prediction_ibcf, data = getData(eval_sets, "unknown"), byUser = F)
+
+eval_accuracy_ibcf_user <- calcPredictionAccuracy(
+  x = eval_prediction_ibcf, data = getData(eval_sets, "unknown"), byUser = TRUE)
+
+
+head(eval_accuracy_ibcf_user)
+
+#SVD -  (mean-centered) Singular Value Decomposition (SVD)
+eval_accuracy_svd <- calcPredictionAccuracy(
+  x = eval_prediction_svd, data = getData(eval_sets, "unknown"), byUser = F)
+
+eval_accuracy_svd_user <- calcPredictionAccuracy(
+  x = eval_prediction_svd, data = getData(eval_sets, "unknown"), byUser = TRUE)
+
+
+head(eval_accuracy_svd_user)
+
+#SVDF
+eval_accuracy_svdf <- calcPredictionAccuracy(
+  x = eval_prediction_svdf, data = getData(eval_sets, "unknown"), byUser = F)
+
+eval_accuracy_svdf_user <- calcPredictionAccuracy(
+  x = eval_prediction_svdf, data = getData(eval_sets, "unknown"), byUser = TRUE)
+
+
+head(eval_accuracy_svdf_user)
+
+
+eval_accuracy_ubcf
+eval_accuracy_ibcf
+eval_accuracy_svd
+eval_accuracy_svdf
+ 
+```
+
+# IBCF vs UBCF
+
+Item-Based and User-Based Collaborative Filtering are two primary techniques used in recommendation systems, each with distinct advantages and challenges. Here's an outline of their pros and cons:
+
+## Item-Based Collaborative Filtering (IBCF)
+
+Pros:
+- Stability Over Time: Items usually don't change their nature quickly. For example, the characteristics of a movie or a book remain constant, making the item-item similarities relatively stable over time.
+- Scalability: Since the number of items is generally smaller than the number of users, computing item-item similarities can be more scalable in certain contexts.
+- Transparency: Recommendations can be more interpretable (e.g., recommending a movie because it's similar to others a user liked).
+- Less Noise: Recommendations based on item similarity often involve less noise than those based on user behavior, which can be more erratic.
+
+Cons:
+- Cold Start for New Items: New items with few interactions are challenging to recommend because their similarity to other items cannot be accurately calculated until they receive sufficient ratings.
+- Limited Diversity: The system might recommend items too similar to those the user has already interacted with, potentially leading to a filter bubble where new or diverse interests are not adequately explored.
+Sparse Data Issues: When the item interaction data is sparse (many items but few ratings), calculating reliable similarities can be difficult.
+
+## User-Based Collaborative Filtering (UBCF)
+
+Pros:
+- Rich Context: User-based methods can capture complex user behaviors and preferences, potentially leading to more personalized recommendations.
+- Flexibility: This method can adapt quickly to changes in user preferences, as it directly uses user feedback for recommendations.
+- Immediate Integration of New Items: New items can be recommended as soon as any user interacts with them, as long as they are similar to other users in their tastes.
+
+Cons:
+- Scalability Issues: As the number of users grows, computing similarities between them becomes computationally expensive and less practical.
+- Cold Start for New Users: New users without sufficient interaction history pose a challenge because there's little data to base any recommendations on.
+- Dynamic Data Requirements: User preferences can change over time, necessitating frequent re-computation of similarities to maintain recommendation accuracy.
+- Privacy Concerns: Storing and processing detailed user profiles might raise privacy issues, especially if sensitive or personal data is involved.
+- Choosing Between IBCF and UBCF
+
+## Decision
+The choice between IBCF and UBCF often depends on the specific characteristics of the dataset and the application domain. IBCF is generally preferred when there is a relatively stable set of items and when the computational resources are limited for handling large user bases. UBCF might be more suitable in environments where user interaction data is rich and continuously updated, allowing the system to adapt quickly to changes in user behavior.
+
+Ultimately, hybrid approaches are frequently employed to mitigate the limitations of both IBCF and UBCF, aiming to enhance recommendation quality and user satisfaction.

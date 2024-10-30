@@ -1,0 +1,88 @@
+
+```{r}
+library(readxl)
+library(lavaan)
+library(foreign)
+data <- read_excel("Dataset.xlsx")
+```
+
+# Data preprocessing
+
+```{r}
+levels = c("Totally disagree", "Disagree", "More or less disagree", "Neutral", "More or less agree", "Agree","Totally agree")
+df <- data.frame(lapply(data[,2:26], function(x) as.integer(factor(x, levels = levels))))
+```
+
+# Investigate correlations
+
+```{r}
+cormatrix <- cor(df)
+round(cormatrix, 2)
+```
+
+```{r}
+# Bartlett Sphericity Test. The null hypothesis is that the data dimension reduction is not possible. 
+# If p-value < 0.05, we reject the null hypothesis and apply FA. This test is sensitive to N.
+library(psych)
+print(cortest.bartlett(cor(df), nrow(df)))
+
+# Kaiser-Meyer-Oklin Test (KMO). MSO overall should be .60 or higher to proceed with factor analysis
+KMO(df)
+
+# Calculate eigenvalues
+library(nFactors)
+ev <- eigen(cor(df))
+ev$values
+
+# The first 7 factors have an eigenvalue >1
+plot(ev$values, type="line")   
+
+# Get factors and loadings
+fit = factanal(~ ., factors = 7, data = df, lower=0.3, rotation = "varimax")
+print(fit, sort=TRUE, cutoff=0.3)
+
+# Uniquesness for each item are 1-communality
+1- apply(fit$loadings^2,1,sum)
+
+# Communalities
+apply(fit$loadings^2,1,sum)
+
+```
+
+# CFA (Confirmatory Factor Analysis)
+
+```{r}
+library(lavaan)
+CFA.model <- 'CPA =~ Q1 + Q2 + Q3 + Q4
+             RA =~ Q5 + Q6 + Q7 + Q8 + Q9
+             CPL =~ Q10 + Q11 + Q12
+             TRI =~ Q13 + Q14 + Q15
+             OBS =~ Q16 + Q17 + Q18
+             ATT =~ Q19 + Q20 + Q21
+             INT =~ Q22 + Q23 + Q24 + Q25'
+
+fit1 <- cfa(CFA.model, data = df)
+summary(fit1, fit.measures=TRUE, standardized = TRUE, modindices = FALSE)
+```
+
+             CPA ~~ RA
+             CPA ~~ CPL
+             CPA ~~ TRI
+             CPA ~~ OBS
+             CPA ~~ ATT
+             CPA ~~ INT
+             RA ~~ CPL
+             RA ~~ TRI
+             RA ~~ OBS
+             RA ~~ ATT
+             RA ~~ INT
+             CPL ~~ TRI
+             CPL ~~ OBS
+             CPL ~~ ATT
+             CPL ~~ INT
+             TRI ~~ OBS
+             TRI ~~ ATT
+             TRI ~~ INT
+             OBS ~~ ATT
+             OBS ~~ INT
+             ATT ~~ INT
